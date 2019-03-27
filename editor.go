@@ -1,5 +1,15 @@
 package main
 
+// TODO: draw keyboard function keys reference
+// TODO: add concept of focus contexts and ability to switch focus context,
+//       pass some key and cursor events to current context
+// TODO: allow cursor movement, data editing and file save commands
+// TODO: add data editor for generic data (binary, ints, floats, time, guid, disasm?)
+// TODO: add data editor for defined data (file formats, structs, protobufs?)
+// TODO: add simple endianness switch in data editors
+// TODO: add debounce to resize event
+// TODO: allow changing some flags from within the editor
+
 import (
 	"encoding/hex"
 	"fmt"
