@@ -1,6 +1,5 @@
 package main
 
-// TODO: draw keyboard function keys reference
 // TODO: add concept of focus contexts and ability to switch focus context,
 //       pass some key and cursor events to current context
 // TODO: allow cursor movement, data editing and file save commands
@@ -45,6 +44,7 @@ func (e *editor) init() {
 	// draw content
 	e.drawStatic()
 	e.drawDynamic()
+	e.term.setCursor(pos{10, 1})
 
 	// event loop
 	for {
@@ -66,12 +66,13 @@ func (e *editor) init() {
 			e.term.reset()
 			e.drawStatic()
 			e.drawDynamic()
+			e.term.setCursor(pos{10, 1})
 
 		case termbox.EventKey:
 			// handle keypress
 			switch ev.Key {
-			case termbox.KeyCtrlC:
-				// close editor on C-c
+			case termbox.KeyCtrlC, termbox.KeyF10:
+				// close editor on C-c or F10
 				e.close()
 			}
 		}
@@ -147,7 +148,11 @@ func (e *editor) printableBytesPerRow() int64 {
 }
 
 func (e *editor) printableBytes() int64 {
-	return e.printableBytesPerRow() * int64(e.term.h-1)
+	reservedRows := 1 // offset header
+	if e.flags.Columns["keys"] {
+		reservedRows++ // key reference
+	}
+	return e.printableBytesPerRow() * int64(e.term.h-reservedRows)
 }
 
 // drawing methods
@@ -156,9 +161,29 @@ func (e *editor) printableBytes() int64 {
 func (e *editor) drawStatic() {
 	var i, j, pad int
 
+	// invert foreground and background
+	e.term.fg, e.term.bg = e.term.bg, e.term.fg
+
+	// draw key reference
+	if e.flags.Columns["keys"] {
+		// set cursor position to last row
+		e.term.setCursor(pos{0, e.term.h - 1})
+
+		// draw keys
+		e.drawKey("F10", "Quit")
+
+		// draw background for rest of row
+		for e.term.x < e.term.w {
+			e.term.writeOverflow(" ")
+		}
+	}
+
 	// draw hex data view
-	if e.flags.hasColumn("hex") {
+	if e.flags.Columns["hex"] {
+		// reset cursor position
 		e.term.setCursor(pos{0, 0})
+
+		// draw offset base
 		switch e.flags.OffsetBase {
 		case "hex":
 			pad = (e.flags.BytesPerRow - (e.flags.BytesPerRow % 0x100)) / 0x100
@@ -170,6 +195,8 @@ func (e *editor) drawStatic() {
 			pad = (e.flags.BytesPerRow - (e.flags.BytesPerRow % 0100)) / 0100
 			e.term.writeOverflow(strings.Repeat("\n", pad) + "Offset(o) ")
 		}
+
+		// draw offsets
 		for i = 1; j < e.flags.BytesPerRow; i++ {
 			if e.term.x >= e.term.w {
 				break
@@ -209,12 +236,25 @@ func (e *editor) drawStatic() {
 				e.term.writeOverflow(strings.Repeat(" ", e.flags.Group*2-1))
 			}
 		}
+
+		// draw separator for text column
+		if e.flags.Columns["text"] {
+			e.term.writeOverflow(" ")
+		}
 	}
 
 	// draw text data view
-	if e.flags.hasColumn("text") {
-		e.term.writeOverflow(" Decoded text")
+	if e.flags.Columns["text"] {
+		e.term.writeOverflow("Decoded text")
 	}
+
+	// draw background for rest of row
+	for e.term.x < e.term.w {
+		e.term.writeOverflow(" ")
+	}
+
+	// restore foreground and background
+	e.term.fg, e.term.bg = e.term.bg, e.term.fg
 
 	// move cursor to start of new line
 	e.term.writeOverflow("\r\n")
@@ -227,14 +267,18 @@ func (e *editor) drawDynamic() {
 
 	for ; offset < end; offset += bytesPerRow {
 		// draw hex data view
-		if e.flags.hasColumn("hex") {
+		if e.flags.Columns["hex"] {
 			e.drawOffset(offset)
 			e.drawBytes(e.buffer[offset : offset+bytesPerRow])
+
+			// draw separator for text column
+			if e.flags.Columns["text"] {
+				e.term.writeOverflow(" ")
+			}
 		}
 
 		// draw text data view
-		if e.flags.hasColumn("text") {
-			e.term.writeOverflow(" ")
+		if e.flags.Columns["text"] {
 			e.drawText(e.buffer[offset : offset+bytesPerRow])
 		}
 
@@ -243,8 +287,22 @@ func (e *editor) drawDynamic() {
 	}
 }
 
+func (e *editor) drawKey(key, desc string) {
+	// invert foreground and background
+	e.term.fg, e.term.bg = e.term.bg, e.term.fg
+
+	// draw key
+	e.term.writeOverflow(key)
+
+	// restore foreground and background
+	e.term.fg, e.term.bg = e.term.bg, e.term.fg
+
+	// draw description
+	e.term.writeOverflow(desc)
+}
+
 func (e *editor) drawOffset(offset int64) {
-	if e.flags.hasColumn("hex") {
+	if e.flags.Columns["hex"] {
 		switch e.flags.OffsetBase {
 		case "hex":
 			e.term.writeOverflow(fmt.Sprintf("%08X  ", offset))

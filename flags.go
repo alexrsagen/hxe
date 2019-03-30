@@ -12,7 +12,7 @@ type flags struct {
 	DisplayVersion   bool
 	DisplayEncodings bool
 	rawColumns       string
-	Columns          []string
+	Columns          map[string]bool
 	OffsetBase       string
 	Group            int
 	BytesPerRow      int
@@ -26,7 +26,7 @@ func (f *flags) init() {
 	flag.BoolVar(&f.DisplayHelp, "help", false, "")
 	flag.BoolVar(&f.DisplayVersion, "version", false, "")
 	flag.BoolVar(&f.DisplayEncodings, "encodings", false, "")
-	flag.StringVar(&f.rawColumns, "cols", "hex,text", "")
+	flag.StringVar(&f.rawColumns, "cols", "hex,text,keys", "")
 	flag.StringVar(&f.OffsetBase, "offset_base", "hex", "")
 	flag.IntVar(&f.Group, "group", 1, "")
 	flag.IntVar(&f.BytesPerRow, "row", 16, "")
@@ -37,7 +37,7 @@ valid options are:
  -help                       display this summary
  -version                    display version
  -encodings                  display a list of supported encodings for use with -enc
- -cols val                   comma-separated string of columns to display (default: "hex,text")
+ -cols val                   comma-separated string of columns to display (default: "hex,text,keys")
  -offset_base dec|hex|oct    which radix to use for offsets (default: hex)
  -group                      how many bytes to display in a group (default: 1, options: 1, 2, 4, 8, 16)
  -row                        how many bytes to display per row (default: 16, options: 1-4096)
@@ -122,29 +122,20 @@ valid options are:
 
 	f.Filename = flag.Arg(0)
 	f.Encoding = strings.ToLower(f.Encoding)
-	f.Columns = strings.Split(strings.ToLower(f.rawColumns), ",")
+	f.Columns = map[string]bool{
+		"hex":  false,
+		"text": false,
+		"keys": false,
+	}
 
-	for _, v := range f.Columns {
-		if v != "hex" && v != "text" {
+	for _, v := range strings.Split(strings.ToLower(f.rawColumns), ",") {
+		switch v {
+		case "hex", "text", "keys":
+			f.Columns[v] = true
+		default:
 			fmt.Fprintf(flag.CommandLine.Output(), "invalid column type \"%s\"\n", v)
 			flag.Usage()
 			os.Exit(1)
 		}
 	}
-
-	if len(f.Columns) == 0 {
-		fmt.Fprintln(flag.CommandLine.Output(), "no columns specified")
-		flag.Usage()
-		os.Exit(1)
-	}
-}
-
-// hasColumn checks if flags.Columns contains a given string
-func (f *flags) hasColumn(name string) bool {
-	for _, v := range f.Columns {
-		if v == name {
-			return true
-		}
-	}
-	return false
 }
