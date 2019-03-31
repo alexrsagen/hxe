@@ -8,22 +8,6 @@ import (
 
 // this file contains helper functions used in other files
 
-// must checks if the last return value of a function is an error
-// and panics if it is a non-nil error, otherwise returning
-// the first return value.
-func must(v ...interface{}) interface{} {
-	if len(v) == 0 {
-		return nil
-	}
-	switch x := v[len(v)-1].(type) {
-	case error:
-		if x != nil {
-			panic(x)
-		}
-	}
-	return v[0]
-}
-
 func getCharmap(name string) (*charmap.Charmap, error) {
 	switch name {
 	case "utf8", "utf-8":
@@ -123,6 +107,20 @@ func max(a, b int) int {
 }
 
 func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func max64(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func min64(a, b int64) int64 {
 	if a < b {
 		return a
 	}

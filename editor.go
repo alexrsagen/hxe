@@ -1,115 +1,100 @@
 package main
 
-// TODO: add concept of focus contexts and ability to switch focus context,
-//       pass some key and cursor events to current context
-// TODO: allow cursor movement, data editing and file save commands
-// TODO: add data editor for generic data (binary, ints, floats, time, guid, disasm?)
-// TODO: add data editor for defined data (file formats, structs, protobufs?)
-// TODO: add simple endianness switch in data editors
-// TODO: add debounce to resize event
-// TODO: allow changing some flags from within the editor
-
 import (
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
 	"github.com/nsf/termbox-go"
 )
 
-type editor struct {
-	flags  flags
-	term   term
-	file   *os.File
-	offset int64
-	buffer []byte
-	err    error
+type editorArea struct {
+	file         *os.File    // current file being edited
+	fileStat     os.FileInfo // stat of file
+	offset       int64       // byte offset of file to display
+	cursorOffset int64       // relative to offset
+	buffer       []byte      // bytes currently in view, loaded from file at offset
+
+	focused       bool
+	lastCursorPos pos
 }
 
 // general editor methods
 
-func (e *editor) init() {
-	// initialize everything needed for the editor
-	e.flags.init()
-	e.term.init()
-
+func (a *editorArea) init() (err error) {
 	// open file
-	e.file = must(os.OpenFile(e.flags.Filename, os.O_RDWR|os.O_CREATE, 0644)).(*os.File)
+	if a.file, err = os.OpenFile(app.flags.Filename, os.O_RDWR|os.O_CREATE, 0644); err != nil {
+		return
+	}
+	if a.fileStat, err = a.file.Stat(); err != nil {
+		return
+	}
 
 	// initialize buffer
-	e.buffer = make([]byte, e.printableBytes())
-	e.load()
+	a.buffer = make([]byte, a.bufferSize())
+	if err = a.load(); err != nil {
+		return
+	}
 
 	// draw content
-	e.drawStatic()
-	e.drawDynamic()
-	e.term.setCursor(pos{10, 1})
+	a.drawStatic()
+	a.drawDynamic()
+	a.lastCursorPos = pos{10, 1}
 
-	// event loop
-	for {
-		// flush terminal if modified
-		e.term.flush()
+	return
+}
 
-		switch ev := termbox.PollEvent(); ev.Type {
-		case termbox.EventResize:
-			// set new terminal size
-			e.term.w = ev.Width
-			e.term.h = ev.Height
+func (a *editorArea) onEvent(ev termbox.Event) error {
+	switch ev.Type {
+	case termbox.EventResize:
+		// resize buffer
+		if a.bufferSize() > int64(cap(a.buffer)) {
+			a.buffer = make([]byte, a.bufferSize())
+		}
 
-			// resize buffer
-			if e.printableBytes() > int64(cap(e.buffer)) {
-				e.buffer = make([]byte, e.printableBytes())
-			}
-
-			// redraw content
-			e.term.reset()
-			e.drawStatic()
-			e.drawDynamic()
-			e.term.setCursor(pos{10, 1})
-
-		case termbox.EventKey:
-			// handle keypress
-			switch ev.Key {
-			case termbox.KeyCtrlC, termbox.KeyF10:
-				// close editor on C-c or F10
-				e.close()
-			}
+		// redraw content
+		app.term.reset()
+		a.drawStatic()
+		a.drawDynamic()
+		if a.focused {
+			app.term.setCursor(a.lastCursorPos)
 		}
 	}
+
+	return nil
 }
 
-func (e *editor) close() {
-	// reset terminal so any further output will be okay
-	e.term.reset()
-	e.term.close()
-
-	if e.file != nil {
-		e.file.Close()
-	}
-
-	if e.err != nil {
-		panic(e.err)
-	}
-
-	os.Exit(0)
+func (a *editorArea) onClose() error {
+	return a.file.Close()
 }
 
-func (e *editor) error(err error) {
-	e.err = err
-	e.close()
+func (a *editorArea) onFocus() error {
+	a.focused = true
+	app.term.setCursor(a.lastCursorPos)
+	return nil
+}
+
+func (a *editorArea) onUnfocus() error {
+	a.focused = false
+	a.lastCursorPos = app.term.pos
+	return nil
 }
 
 // data methods
 
 // load fills the editor buffer from the file contents
-func (e *editor) load() {
-	must(e.file.ReadAt(e.buffer, e.offset))
+func (a *editorArea) load() error {
+	if _, err := a.file.ReadAt(a.buffer, a.offset); err != nil && err != io.EOF {
+		return err
+	}
+	return nil
 }
 
 // encode converts bytes from UTF-8 to the editor encoding defined in flags
-func (e *editor) encode(in []byte) ([]byte, error) {
-	cm, err := getCharmap(e.flags.Encoding)
+func (a *editorArea) encode(in []byte) ([]byte, error) {
+	cm, err := getCharmap(app.flags.Encoding)
 	if err != nil {
 		return nil, err
 	}
@@ -124,8 +109,8 @@ func (e *editor) encode(in []byte) ([]byte, error) {
 }
 
 // decode converts bytes from the editor encoding defined in flags to UTF-8
-func (e *editor) decode(in []byte) ([]byte, error) {
-	cm, err := getCharmap(e.flags.Encoding)
+func (a *editorArea) decode(in []byte) ([]byte, error) {
+	cm, err := getCharmap(app.flags.Encoding)
 	if err != nil {
 		return nil, err
 	}
@@ -139,194 +124,207 @@ func (e *editor) decode(in []byte) ([]byte, error) {
 	return out, nil
 }
 
-func (e *editor) printableBytesPerRow() int64 {
+func (a *editorArea) printableBytesPerRow() int64 {
 	const offset = len("Offset(x)")
-	base := e.term.w - offset
-	charsPerGroup := e.flags.Group*2 + 1
-	maxBytesPerRow := (base / charsPerGroup) * e.flags.Group
-	return int64(min(e.flags.BytesPerRow, maxBytesPerRow))
+	base := app.term.w - offset
+	charsPerGroup := app.flags.Group*2 + 1
+	maxBytesPerRow := (base / charsPerGroup) * app.flags.Group
+	return int64(min(app.flags.BytesPerRow, maxBytesPerRow))
 }
 
-func (e *editor) printableBytes() int64 {
+func (a *editorArea) printableBytes() int64 {
 	reservedRows := 1 // offset header
-	if e.flags.Columns["keys"] {
+	if app.flags.Columns["keys"] {
 		reservedRows++ // key reference
 	}
-	return e.printableBytesPerRow() * int64(e.term.h-reservedRows)
+	return a.printableBytesPerRow() * int64(app.term.h-reservedRows)
+}
+
+func (a *editorArea) bufferSize() int64 {
+	return min64(a.offset+a.printableBytes(), a.fileStat.Size())
 }
 
 // drawing methods
 
 // drawStatic draws static content to the terminal
-func (e *editor) drawStatic() {
+func (a *editorArea) drawStatic() {
 	var i, j, pad int
 
 	// invert foreground and background
-	e.term.fg, e.term.bg = e.term.bg, e.term.fg
+	app.term.fg, app.term.bg = app.term.bg, app.term.fg
 
 	// draw key reference
-	if e.flags.Columns["keys"] {
+	if app.flags.Columns["keys"] {
 		// set cursor position to last row
-		e.term.setCursor(pos{0, e.term.h - 1})
+		app.term.setCursor(pos{0, app.term.h - 1})
 
 		// draw keys
-		e.drawKey("F10", "Quit")
+		a.drawKey("F10", "Quit")
 
 		// draw background for rest of row
-		for e.term.x < e.term.w {
-			e.term.writeOverflow(" ")
+		for app.term.x < app.term.w {
+			app.term.writeOverflow(" ")
 		}
 	}
 
 	// draw hex data view
-	if e.flags.Columns["hex"] {
+	if app.flags.Columns["hex"] {
 		// reset cursor position
-		e.term.setCursor(pos{0, 0})
+		app.term.setCursor(pos{0, 0})
 
 		// draw offset base
-		switch e.flags.OffsetBase {
+		switch app.flags.OffsetBase {
 		case "hex":
-			pad = (e.flags.BytesPerRow - (e.flags.BytesPerRow % 0x100)) / 0x100
-			e.term.writeOverflow(strings.Repeat("\n", pad) + "Offset(h) ")
+			pad = (app.flags.BytesPerRow - (app.flags.BytesPerRow % 0x100)) / 0x100
+			app.term.writeOverflow(strings.Repeat("\n", pad) + "Offset(h) ")
 		case "dec":
-			pad = (e.flags.BytesPerRow - (e.flags.BytesPerRow % 100)) / 100
-			e.term.writeOverflow(strings.Repeat("\n", pad) + "Offset(d) ")
+			pad = (app.flags.BytesPerRow - (app.flags.BytesPerRow % 100)) / 100
+			app.term.writeOverflow(strings.Repeat("\n", pad) + "Offset(d) ")
 		case "oct":
-			pad = (e.flags.BytesPerRow - (e.flags.BytesPerRow % 0100)) / 0100
-			e.term.writeOverflow(strings.Repeat("\n", pad) + "Offset(o) ")
+			pad = (app.flags.BytesPerRow - (app.flags.BytesPerRow % 0100)) / 0100
+			app.term.writeOverflow(strings.Repeat("\n", pad) + "Offset(o) ")
 		}
 
 		// draw offsets
-		for i = 1; j < e.flags.BytesPerRow; i++ {
-			if e.term.x >= e.term.w {
+		for i = 1; j < app.flags.BytesPerRow; i++ {
+			if app.term.x >= app.term.w {
 				break
 			}
-			if i%e.flags.Group == 0 {
-				curx, curj := e.term.x, j
-				switch e.flags.OffsetBase {
+			if i%app.flags.Group == 0 {
+				curx, curj := app.term.x, j
+				switch app.flags.OffsetBase {
 				case "hex":
 					curpad := (curj - (curj % 0x100)) / 0x100
 					for ; curpad > 0; curpad-- {
-						e.term.setCursor(pos{curx, pad - curpad})
-						e.term.writeOverflow("FF")
+						app.term.setCursor(pos{curx, pad - curpad})
+						app.term.writeOverflow("FF")
 						curj -= 0xFF
 					}
-					e.term.setCursor(pos{curx, pad})
-					e.term.writeOverflow(fmt.Sprintf("%02X", curj))
+					app.term.setCursor(pos{curx, pad})
+					app.term.writeOverflow(fmt.Sprintf("%02X", curj))
+
 				case "dec":
 					curpad := (curj - (curj % 100)) / 100
 					for ; curpad > 0; curpad-- {
-						e.term.setCursor(pos{curx, pad - curpad})
-						e.term.writeOverflow("99")
+						app.term.setCursor(pos{curx, pad - curpad})
+						app.term.writeOverflow("99")
 						curj -= 99
 					}
-					e.term.setCursor(pos{curx, pad})
-					e.term.writeOverflow(fmt.Sprintf("%02d", curj))
+					app.term.setCursor(pos{curx, pad})
+					app.term.writeOverflow(fmt.Sprintf("%02d", curj))
+
 				case "oct":
 					curpad := (curj - (curj % 0100)) / 0100
 					for ; curpad > 0; curpad-- {
-						e.term.setCursor(pos{curx, pad - curpad})
-						e.term.writeOverflow("77")
+						app.term.setCursor(pos{curx, pad - curpad})
+						app.term.writeOverflow("77")
 						curj -= 077
 					}
-					e.term.setCursor(pos{curx, pad})
-					e.term.writeOverflow(fmt.Sprintf("%02o", curj))
+					app.term.setCursor(pos{curx, pad})
+					app.term.writeOverflow(fmt.Sprintf("%02o", curj))
 				}
-				j += e.flags.Group
-				e.term.writeOverflow(strings.Repeat(" ", e.flags.Group*2-1))
+
+				j += app.flags.Group
+				app.term.writeOverflow(strings.Repeat(" ", app.flags.Group*2-1))
 			}
 		}
 
 		// draw separator for text column
-		if e.flags.Columns["text"] {
-			e.term.writeOverflow(" ")
+		if app.flags.Columns["text"] {
+			app.term.writeOverflow(" ")
 		}
 	}
 
 	// draw text data view
-	if e.flags.Columns["text"] {
-		e.term.writeOverflow("Decoded text")
+	if app.flags.Columns["text"] {
+		app.term.writeOverflow("Decoded text")
 	}
 
 	// draw background for rest of row
-	for e.term.x < e.term.w {
-		e.term.writeOverflow(" ")
+	for app.term.x < app.term.w {
+		app.term.writeOverflow(" ")
 	}
 
 	// restore foreground and background
-	e.term.fg, e.term.bg = e.term.bg, e.term.fg
+	app.term.fg, app.term.bg = app.term.bg, app.term.fg
 
 	// move cursor to start of new line
-	e.term.writeOverflow("\r\n")
+	app.term.writeOverflow("\r\n")
 }
 
-func (e *editor) drawDynamic() {
-	bytesPerRow := e.printableBytesPerRow()
-	offset := e.offset
-	end := offset + e.printableBytes()
+func (a *editorArea) drawDynamic() {
+	bytesPerRow := a.printableBytesPerRow()
+	offset := a.offset
+	size := a.bufferSize()
 
-	for ; offset < end; offset += bytesPerRow {
+	for ; offset < size; offset += bytesPerRow {
 		// draw hex data view
-		if e.flags.Columns["hex"] {
-			e.drawOffset(offset)
-			e.drawBytes(e.buffer[offset : offset+bytesPerRow])
+		if app.flags.Columns["hex"] {
+			a.drawOffset(offset)
+			a.drawBytes(a.buffer[offset:min64(offset+bytesPerRow, size)])
 
 			// draw separator for text column
-			if e.flags.Columns["text"] {
-				e.term.writeOverflow(" ")
+			if app.flags.Columns["text"] {
+				app.term.writeOverflow(" ")
 			}
 		}
 
 		// draw text data view
-		if e.flags.Columns["text"] {
-			e.drawText(e.buffer[offset : offset+bytesPerRow])
+		if app.flags.Columns["text"] {
+			a.drawText(a.buffer[offset:min64(offset+bytesPerRow, size)])
 		}
 
 		// move cursor to start of new line
-		e.term.writeOverflow("\r\n")
+		app.term.writeOverflow("\r\n")
 	}
 }
 
-func (e *editor) drawKey(key, desc string) {
+func (a *editorArea) drawKey(key, desc string) {
 	// invert foreground and background
-	e.term.fg, e.term.bg = e.term.bg, e.term.fg
+	app.term.fg, app.term.bg = app.term.bg, app.term.fg
 
 	// draw key
-	e.term.writeOverflow(key)
+	app.term.writeOverflow(key)
 
 	// restore foreground and background
-	e.term.fg, e.term.bg = e.term.bg, e.term.fg
+	app.term.fg, app.term.bg = app.term.bg, app.term.fg
 
-	// draw description
-	e.term.writeOverflow(desc)
+	// draw description and padding for next item
+	app.term.writeOverflow(desc + " ")
 }
 
-func (e *editor) drawOffset(offset int64) {
-	if e.flags.Columns["hex"] {
-		switch e.flags.OffsetBase {
+func (a *editorArea) drawOffset(offset int64) {
+	if app.flags.Columns["hex"] {
+		switch app.flags.OffsetBase {
 		case "hex":
-			e.term.writeOverflow(fmt.Sprintf("%08X  ", offset))
+			app.term.writeOverflow(fmt.Sprintf("%08X  ", offset))
 		case "dec":
-			e.term.writeOverflow(fmt.Sprintf("%08d  ", offset))
+			app.term.writeOverflow(fmt.Sprintf("%08d  ", offset))
 		case "oct":
-			e.term.writeOverflow(fmt.Sprintf("%08o  ", offset))
+			app.term.writeOverflow(fmt.Sprintf("%08o  ", offset))
 		}
 	}
 }
 
-func (e *editor) drawBytes(b []byte) {
-	for i := 0; i < len(b); i += e.flags.Group {
-		e.term.writeOverflow(strings.ToUpper(hex.EncodeToString(b[i:i+e.flags.Group])) + " ")
+func (a *editorArea) drawBytes(b []byte) {
+	// draw bytes in current row
+	for i := 0; i < len(b); i += app.flags.Group {
+		app.term.writeOverflow(strings.ToUpper(hex.EncodeToString(b[i:min(i+app.flags.Group, len(b))])) + " ")
+	}
+
+	// draw background for rest of row
+	for i := 0; i < app.flags.BytesPerRow-len(b); i++ {
+		app.term.writeOverflow(strings.Repeat(" ", app.flags.Group*2+1))
 	}
 }
 
-func (e *editor) drawText(b []byte) {
-	encoded := must(e.encode(b)).([]byte)
+func (a *editorArea) drawText(b []byte) {
+	encoded := app.must(a.encode(b)).([]byte)
 	for _, c := range encoded {
 		if c > 31 && c < 127 {
-			e.term.writeOverflow(string(c))
+			app.term.writeOverflow(string(c))
 		} else {
-			e.term.writeOverflow(".")
+			app.term.writeOverflow(".")
 		}
 	}
 }

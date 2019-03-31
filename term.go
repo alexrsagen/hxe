@@ -26,25 +26,36 @@ type term struct {
 	bg       termbox.Attribute
 }
 
-func (t *term) init() {
-	must(termbox.Init())
-	t.reset()
+func (t *term) init() (err error) {
+	if err = termbox.Init(); err != nil {
+		return
+	}
+	if err = t.reset(); err != nil {
+		return
+	}
+	return
 }
 
-func (t *term) reset() {
+func (t *term) reset() (err error) {
 	t.fg = termbox.ColorWhite
 	t.bg = termbox.ColorBlack
-	must(termbox.Clear(t.fg, t.bg))
+	if err = termbox.Clear(t.fg, t.bg); err != nil {
+		return
+	}
 	t.setCursor(pos{0, 0})
-	must(termbox.Flush())
+	if err = termbox.Flush(); err != nil {
+		return
+	}
 	t.w, t.h = termbox.Size()
+	return
 }
 
-func (t *term) flush() {
+func (t *term) flush() (err error) {
 	if t.modified {
-		must(termbox.Flush())
+		err = termbox.Flush()
 		t.modified = false
 	}
+	return
 }
 
 func (t *term) setCursor(p pos) {
