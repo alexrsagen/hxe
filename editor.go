@@ -41,7 +41,7 @@ func (a *editorArea) init() (err error) {
 	// draw content
 	a.drawStatic()
 	a.drawDynamic()
-	a.lastCursorPos = pos{10, 1}
+	a.lastCursorPos = pos{10, 2}
 
 	return
 }
@@ -133,7 +133,7 @@ func (a *editorArea) printableBytesPerRow() int64 {
 }
 
 func (a *editorArea) printableBytes() int64 {
-	reservedRows := 1 // offset header
+	reservedRows := 2 // header + offset header
 	if app.flags.Columns["keys"] {
 		reservedRows++ // key reference
 	}
@@ -152,6 +152,31 @@ func (a *editorArea) drawStatic() {
 
 	// invert foreground and background
 	app.term.fg, app.term.bg = app.term.bg, app.term.fg
+
+	// reset cursor position
+	app.term.setCursor(pos{0, 0})
+
+	// draw editor info
+	app.term.writeOverflow("  hxe ")
+	app.term.writeOverflow(version)
+
+	// draw file info
+	headerPadding := (app.term.w - app.term.x - 2) / 2
+	app.term.writeOverflow(strings.Repeat(" ", headerPadding))
+	app.term.writeOverflow(a.fileStat.Name())
+	app.term.writeOverflow(strings.Repeat(" ", headerPadding))
+
+	// draw background for rest of row
+	for app.term.x < app.term.w {
+		app.term.writeOverflow(" ")
+	}
+
+	// restore foreground and background
+	app.term.fg, app.term.bg = app.term.bg, app.term.fg
+
+	// set new foreground and background
+	fg, bg := app.term.fg, app.term.bg
+	app.term.fg, app.term.bg = termbox.ColorBlack, termbox.ColorCyan
 
 	// draw key reference
 	if app.flags.Columns["keys"] {
@@ -175,13 +200,13 @@ func (a *editorArea) drawStatic() {
 		// draw offset base
 		switch app.flags.OffsetBase {
 		case "hex":
-			pad = (app.flags.BytesPerRow - (app.flags.BytesPerRow % 0x100)) / 0x100
+			pad = 1 + (app.flags.BytesPerRow-(app.flags.BytesPerRow%0x100))/0x100
 			app.term.writeOverflow(strings.Repeat("\n", pad) + "Offset(h) ")
 		case "dec":
-			pad = (app.flags.BytesPerRow - (app.flags.BytesPerRow % 100)) / 100
+			pad = 1 + (app.flags.BytesPerRow-(app.flags.BytesPerRow%100))/100
 			app.term.writeOverflow(strings.Repeat("\n", pad) + "Offset(d) ")
 		case "oct":
-			pad = (app.flags.BytesPerRow - (app.flags.BytesPerRow % 0100)) / 0100
+			pad = 1 + (app.flags.BytesPerRow-(app.flags.BytesPerRow%0100))/0100
 			app.term.writeOverflow(strings.Repeat("\n", pad) + "Offset(o) ")
 		}
 
@@ -246,7 +271,7 @@ func (a *editorArea) drawStatic() {
 	}
 
 	// restore foreground and background
-	app.term.fg, app.term.bg = app.term.bg, app.term.fg
+	app.term.fg, app.term.bg = fg, bg
 
 	// move cursor to start of new line
 	app.term.writeOverflow("\r\n")
