@@ -47,46 +47,102 @@ func (a *editorArea) onEvent(ev termbox.Event) error {
 		}
 
 		// redraw content
+		app.term.reset()
 		a.drawStatic()
 		a.drawDynamic()
 		app.term.setCursor(a.bufferOffsetPos(a.cursorOffset))
 	case termbox.EventKey:
-		currentCursorOffset := a.cursorOffset
+		var cursorChanged, pageChanged bool
 		switch ev.Key {
 		case termbox.KeyArrowLeft:
 			// move one byte back
 			a.cursorOffset--
+			cursorChanged = true
 		case termbox.KeyArrowRight:
 			// move one byte forward
 			a.cursorOffset++
+			cursorChanged = true
 		case termbox.KeyArrowUp:
 			// move one row back
 			a.cursorOffset -= app.flags.BytesPerRow
+			cursorChanged = true
 		case termbox.KeyArrowDown:
 			// move one row forward
 			a.cursorOffset += app.flags.BytesPerRow
+			cursorChanged = true
+		case termbox.KeyPgup:
+			// move one page back
+			a.cursorOffset -= cap(a.buffer)
+			cursorChanged = true
+		case termbox.KeyPgdn:
+			// move one page forward
+			a.cursorOffset += cap(a.buffer)
+			cursorChanged = true
 		}
-		if a.cursorOffset != currentCursorOffset {
+
+		// handle cursor overflow/underflow
+		if cursorChanged {
+			// correct for cursor underflow
 			for a.cursorOffset < 0 {
-				// if first page, set offset to zero
-				if a.offset < int64(len(a.buffer)) {
+				// if first page
+				if a.offset < int64(cap(a.buffer)) {
+					// set offset to zero
 					a.cursorOffset = 0
 					break
 				}
+
 				// go to previous page
+				a.offset -= int64(cap(a.buffer))
+				pageChanged = true
+
 				// add one page to offset
-				a.cursorOffset += len(a.buffer)
+				a.cursorOffset += cap(a.buffer)
 			}
-			for a.cursorOffset > len(a.buffer) {
-				// if last page, set offset to end of page
+
+			// correct for cursor overflow
+			for a.cursorOffset >= len(a.buffer) {
+				// if last page
 				if a.fileStat.Size()-a.offset <= int64(len(a.buffer)) {
+					// set offset to end of page
 					a.cursorOffset = len(a.buffer)
 					break
 				}
+
+				// do nothing if between len and cap on last page
+				if a.cursorOffset < cap(a.buffer) {
+					break
+				}
+
 				// go to next page
+				a.offset += int64(cap(a.buffer))
+				pageChanged = true
+
 				// remove one page from offset
-				a.cursorOffset -= len(a.buffer)
+				a.cursorOffset -= cap(a.buffer)
 			}
+		}
+
+		// reload and redraw page if changed
+		if pageChanged {
+			// correct for cursor underflow on first page
+			// correct for cursor overflow on last page
+			if a.cursorOffset >= len(a.buffer) && a.fileStat.Size()-a.offset <= int64(len(a.buffer)) {
+				// set offset to end of page
+				a.cursorOffset = len(a.buffer)
+			}
+
+			// reload buffer
+			if err := a.load(); err != nil {
+				return err
+			}
+
+			// redraw dynamic content
+			a.clearDynamic()
+			a.drawDynamic()
+		}
+
+		// reposition cursor
+		if cursorChanged || pageChanged {
 			app.term.setCursor(a.bufferOffsetPos(a.cursorOffset))
 		}
 	}
@@ -114,9 +170,18 @@ func (a *editorArea) onUnfocus() error {
 
 // load fills the editor buffer from the file contents
 func (a *editorArea) load() error {
-	if _, err := a.file.ReadAt(a.buffer, a.offset); err != nil && err != io.EOF {
+	// resize buffer to max capacity
+	a.buffer = a.buffer[:cap(a.buffer)]
+
+	// load bytes into buffer from file at offset
+	n, err := a.file.ReadAt(a.buffer, a.offset)
+	if err != nil && err != io.EOF {
 		return err
 	}
+
+	// resize buffer to loaded bytes
+	a.buffer = a.buffer[:n]
+
 	return nil
 }
 
@@ -169,13 +234,16 @@ func (a *editorArea) printableBytes() int64 {
 }
 
 func (a *editorArea) bufferSize() int64 {
-	return min64(a.offset+a.printableBytes(), a.fileStat.Size())
+	return min64(a.printableBytes(), a.fileStat.Size())
 }
 
 func (a *editorArea) bufferOffsetPos(bufferOffset int) pos {
 	row := bufferOffset / app.flags.BytesPerRow
 	rowByte := bufferOffset - row*app.flags.BytesPerRow
 	col := rowByte*2 + rowByte/app.flags.Group
+	if bufferOffset == len(a.buffer) {
+		return pos{9 + app.flags.BytesPerRow*2 + app.flags.BytesPerRow/app.flags.Group, 1 + row}
+	}
 	return pos{10 + col, 2 + row}
 }
 
@@ -316,15 +384,14 @@ func (a *editorArea) drawStatic() {
 }
 
 func (a *editorArea) drawDynamic() {
-	bytesPerRow := int64(app.flags.BytesPerRow)
-	offset := a.offset
-	size := a.bufferSize()
+	// reset cursor position
+	app.term.setCursor(pos{0, 2})
 
-	for ; offset < size; offset += bytesPerRow {
+	for offset := 0; offset < len(a.buffer); offset += app.flags.BytesPerRow {
 		// draw hex data view
 		if app.flags.Columns["hex"] {
-			a.drawOffset(offset)
-			a.drawBytes(a.buffer[offset:min64(offset+bytesPerRow, size)])
+			a.drawOffset(a.offset + int64(offset))
+			a.drawBytes(a.buffer[offset:min(offset+app.flags.BytesPerRow, len(a.buffer))])
 
 			// draw separator for text column
 			if app.flags.Columns["text"] {
@@ -334,11 +401,22 @@ func (a *editorArea) drawDynamic() {
 
 		// draw text data view
 		if app.flags.Columns["text"] {
-			a.drawText(a.buffer[offset:min64(offset+bytesPerRow, size)])
+			a.drawText(a.buffer[offset:min(offset+app.flags.BytesPerRow, len(a.buffer))])
 		}
 
 		// move cursor to start of new line
 		app.term.writeOverflow("\r\n")
+	}
+}
+
+func (a *editorArea) clearDynamic() {
+	// empty dynamic area
+	for i := 2; i < app.term.h-1; i++ {
+		// set cursor position
+		app.term.setCursor(pos{0, i})
+
+		// draw empty row
+		app.term.writeOverflow(strings.Repeat(" ", app.term.w))
 	}
 }
 
