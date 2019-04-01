@@ -28,12 +28,12 @@ var app = editor{
 }
 
 func main() {
+	defer app.close()
+
 	app.flags.init()
 	app.term.init()
 	app.must(app.areas.add("editor", &editorArea{}))
 	app.areas.focus("editor")
-
-	defer app.close()
 
 	// main event loop
 	for {
@@ -74,12 +74,18 @@ func main() {
 }
 
 func (e *editor) close() {
+	// recover any panic that happened naturally
+	r := recover()
+
 	// reset terminal so any further output will be okay
 	e.term.reset()
 	e.term.close()
 
 	e.areas.close()
 
+	if r != nil {
+		panic(r)
+	}
 	if e.err != nil {
 		panic(e.err)
 	}
