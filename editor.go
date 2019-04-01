@@ -239,11 +239,11 @@ func (a *editorArea) bufferSize() int64 {
 
 func (a *editorArea) bufferOffsetPos(bufferOffset int) pos {
 	row := bufferOffset / app.flags.BytesPerRow
-	rowByte := bufferOffset - row*app.flags.BytesPerRow
-	col := rowByte*2 + rowByte/app.flags.Group
-	if bufferOffset == len(a.buffer) {
+	if bufferOffset == len(a.buffer) && bufferOffset%app.flags.BytesPerRow == 0 {
 		return pos{9 + app.flags.BytesPerRow*2 + app.flags.BytesPerRow/app.flags.Group, 1 + row}
 	}
+	rowByte := bufferOffset - row*app.flags.BytesPerRow
+	col := rowByte*2 + rowByte/app.flags.Group
 	return pos{10 + col, 2 + row}
 }
 
