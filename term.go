@@ -60,7 +60,7 @@ func (t *term) flush() (err error) {
 
 func (t *term) setCursor(p pos) {
 	t.x, t.y = p.x, p.y
-	if t.x < t.w && t.y < t.h {
+	if t.x >= 0 && t.x < t.w && t.y >= 0 && t.y < t.h {
 		termbox.SetCursor(t.x, t.y)
 	}
 }
@@ -71,7 +71,7 @@ func (t *term) writeRune(c rune) {
 	} else if c == '\r' {
 		t.x = 0
 	} else {
-		if t.x < t.w && t.y < t.h {
+		if t.x >= 0 && t.x < t.w && t.y >= 0 && t.y < t.h {
 			termbox.SetCell(t.x, t.y, c, t.fg, t.bg)
 		}
 		t.x++
