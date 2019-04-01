@@ -1,11 +1,11 @@
 package main
 
-// TODO: allow cursor movement, data editing and file save commands
+// TODO: add data editing and file save commands
 // TODO: add data editor for generic data (binary, ints, floats, time, guid, disasm?)
 // TODO: add data editor for defined data (file formats, structs, protobufs?)
 // TODO: add simple endianness switch in data editors
 // TODO: add debounce to resize event
-// TODO: allow changing some flags from within the editor
+// TODO: add some settings from within the editor to change flags
 
 import (
 	"os"

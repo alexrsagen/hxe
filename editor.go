@@ -14,11 +14,8 @@ type editorArea struct {
 	file         *os.File    // current file being edited
 	fileStat     os.FileInfo // stat of file
 	offset       int64       // byte offset of file to display
-	cursorOffset int64       // relative to offset
+	cursorOffset int         // relative to offset
 	buffer       []byte      // bytes currently in view, loaded from file at offset
-
-	focused       bool
-	lastCursorPos pos
 }
 
 // general editor methods
@@ -38,11 +35,6 @@ func (a *editorArea) init() (err error) {
 		return
 	}
 
-	// draw content
-	a.drawStatic()
-	a.drawDynamic()
-	a.lastCursorPos = pos{10, 2}
-
 	return
 }
 
@@ -55,11 +47,47 @@ func (a *editorArea) onEvent(ev termbox.Event) error {
 		}
 
 		// redraw content
-		app.term.reset()
 		a.drawStatic()
 		a.drawDynamic()
-		if a.focused {
-			app.term.setCursor(a.lastCursorPos)
+		app.term.setCursor(a.bufferOffsetPos(a.cursorOffset))
+	case termbox.EventKey:
+		currentCursorOffset := a.cursorOffset
+		switch ev.Key {
+		case termbox.KeyArrowLeft:
+			// move one byte back
+			a.cursorOffset--
+		case termbox.KeyArrowRight:
+			// move one byte forward
+			a.cursorOffset++
+		case termbox.KeyArrowUp:
+			// move one row back
+			a.cursorOffset -= app.flags.BytesPerRow
+		case termbox.KeyArrowDown:
+			// move one row forward
+			a.cursorOffset += app.flags.BytesPerRow
+		}
+		if a.cursorOffset != currentCursorOffset {
+			for a.cursorOffset < 0 {
+				// if first page, set offset to zero
+				if a.offset < int64(len(a.buffer)) {
+					a.cursorOffset = 0
+					break
+				}
+				// go to previous page
+				// add one page to offset
+				a.cursorOffset += len(a.buffer)
+			}
+			for a.cursorOffset > len(a.buffer) {
+				// if last page, set offset to end of page
+				if a.fileStat.Size()-a.offset <= int64(len(a.buffer)) {
+					a.cursorOffset = len(a.buffer)
+					break
+				}
+				// go to next page
+				// remove one page from offset
+				a.cursorOffset -= len(a.buffer)
+			}
+			app.term.setCursor(a.bufferOffsetPos(a.cursorOffset))
 		}
 	}
 
@@ -71,14 +99,14 @@ func (a *editorArea) onClose() error {
 }
 
 func (a *editorArea) onFocus() error {
-	a.focused = true
-	app.term.setCursor(a.lastCursorPos)
+	// draw content
+	a.drawStatic()
+	a.drawDynamic()
+	app.term.setCursor(a.bufferOffsetPos(a.cursorOffset))
 	return nil
 }
 
 func (a *editorArea) onUnfocus() error {
-	a.focused = false
-	a.lastCursorPos = app.term.pos
 	return nil
 }
 
@@ -144,6 +172,13 @@ func (a *editorArea) bufferSize() int64 {
 	return min64(a.offset+a.printableBytes(), a.fileStat.Size())
 }
 
+func (a *editorArea) bufferOffsetPos(bufferOffset int) pos {
+	row := bufferOffset / app.flags.BytesPerRow
+	rowByte := bufferOffset - row*app.flags.BytesPerRow
+	col := rowByte*2 + rowByte/app.flags.Group
+	return pos{10 + col, 2 + row}
+}
+
 // drawing methods
 
 // drawStatic draws static content to the terminal
@@ -200,13 +235,13 @@ func (a *editorArea) drawStatic() {
 		// draw offset base
 		switch app.flags.OffsetBase {
 		case "hex":
-			pad = 1 + (app.flags.BytesPerRow-(app.flags.BytesPerRow%0x100))/0x100
+			pad = 1 + (app.flags.BytesPerRow-(app.flags.BytesPerRow%0xFF))/0xFF
 			app.term.writeOverflow(strings.Repeat("\n", pad) + "Offset(h) ")
 		case "dec":
-			pad = 1 + (app.flags.BytesPerRow-(app.flags.BytesPerRow%100))/100
+			pad = 1 + (app.flags.BytesPerRow-(app.flags.BytesPerRow%99))/99
 			app.term.writeOverflow(strings.Repeat("\n", pad) + "Offset(d) ")
 		case "oct":
-			pad = 1 + (app.flags.BytesPerRow-(app.flags.BytesPerRow%0100))/0100
+			pad = 1 + (app.flags.BytesPerRow-(app.flags.BytesPerRow%077))/077
 			app.term.writeOverflow(strings.Repeat("\n", pad) + "Offset(o) ")
 		}
 
@@ -219,30 +254,33 @@ func (a *editorArea) drawStatic() {
 				curx, curj := app.term.x, j
 				switch app.flags.OffsetBase {
 				case "hex":
-					curpad := (curj - (curj % 0x100)) / 0x100
+					curpad := (curj - (curj % 0xFF)) / 0xFF
 					for ; curpad > 0; curpad-- {
 						app.term.setCursor(pos{curx, pad - curpad})
 						app.term.writeOverflow("FF")
+						app.term.writeOverflow(strings.Repeat(" ", app.flags.Group*2-1))
 						curj -= 0xFF
 					}
 					app.term.setCursor(pos{curx, pad})
 					app.term.writeOverflow(fmt.Sprintf("%02X", curj))
 
 				case "dec":
-					curpad := (curj - (curj % 100)) / 100
+					curpad := (curj - (curj % 99)) / 99
 					for ; curpad > 0; curpad-- {
 						app.term.setCursor(pos{curx, pad - curpad})
 						app.term.writeOverflow("99")
+						app.term.writeOverflow(strings.Repeat(" ", app.flags.Group*2-1))
 						curj -= 99
 					}
 					app.term.setCursor(pos{curx, pad})
 					app.term.writeOverflow(fmt.Sprintf("%02d", curj))
 
 				case "oct":
-					curpad := (curj - (curj % 0100)) / 0100
+					curpad := (curj - (curj % 077)) / 077
 					for ; curpad > 0; curpad-- {
 						app.term.setCursor(pos{curx, pad - curpad})
 						app.term.writeOverflow("77")
+						app.term.writeOverflow(strings.Repeat(" ", app.flags.Group*2-1))
 						curj -= 077
 					}
 					app.term.setCursor(pos{curx, pad})
@@ -278,7 +316,7 @@ func (a *editorArea) drawStatic() {
 }
 
 func (a *editorArea) drawDynamic() {
-	bytesPerRow := a.printableBytesPerRow()
+	bytesPerRow := int64(app.flags.BytesPerRow)
 	offset := a.offset
 	size := a.bufferSize()
 
