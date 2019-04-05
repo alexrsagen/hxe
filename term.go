@@ -39,20 +39,20 @@ func (t *term) init() (err error) {
 func (t *term) reset() (err error) {
 	t.fg = termbox.ColorWhite
 	t.bg = termbox.ColorBlack
+	termbox.HideCursor()
 	if err = termbox.Clear(t.fg, t.bg); err != nil {
 		return
 	}
-	t.setCursor(pos{0, 0})
-	if err = termbox.Flush(); err != nil {
-		return
-	}
 	t.w, t.h = termbox.Size()
+	t.setCursor(pos{0, 0})
 	return
 }
 
 func (t *term) flush() (err error) {
 	if t.modified {
 		err = termbox.Flush()
+		t.w, t.h = termbox.Size()
+		t.setCursor(t.pos)
 		t.modified = false
 	}
 	return

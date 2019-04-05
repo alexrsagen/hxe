@@ -9,6 +9,7 @@ package main
 
 import (
 	"os"
+	"syscall"
 
 	"github.com/nsf/termbox-go"
 )
@@ -35,7 +36,10 @@ func main() {
 	app.must(app.areas.add("editor", &editorArea{}))
 	app.areas.focus("editor")
 
-	// main event loop
+	loop()
+}
+
+func loop() {
 	for {
 		// flush terminal if modified
 		app.term.flush()
@@ -76,6 +80,11 @@ func main() {
 func (e *editor) close() {
 	// recover any panic that happened naturally
 	r := recover()
+	if r != nil {
+		if v, ok := r.(syscall.Errno); ok && v == 0x57 {
+			panic("Crashed due to race condition in termbox-go: https://github.com/nsf/termbox-go/issues/125")
+		}
+	}
 
 	// reset terminal so any further output will be okay
 	e.term.reset()
@@ -83,6 +92,7 @@ func (e *editor) close() {
 
 	e.areas.close()
 
+	// panic to dump error with stack trace
 	if r != nil {
 		panic(r)
 	}
