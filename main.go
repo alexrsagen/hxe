@@ -9,9 +9,8 @@ package main
 
 import (
 	"os"
-	"syscall"
 
-	"github.com/nsf/termbox-go"
+	"github.com/gdamore/tcell"
 )
 
 type editor struct {
@@ -44,21 +43,21 @@ func loop() {
 		// flush terminal if modified
 		app.term.flush()
 
-		switch ev := termbox.PollEvent(); ev.Type {
-		case termbox.EventResize:
+		ev := app.term.screen.PollEvent()
+		switch v := ev.(type) {
+		case *tcell.EventResize:
 			// set new terminal size
-			app.term.w = ev.Width
-			app.term.h = ev.Height
+			app.term.w, app.term.h = v.Size()
 
 			// pass event to current area
 			if app.areas.current != nil {
 				app.must(app.areas.current.onEvent(ev))
 			}
 
-		case termbox.EventKey:
+		case *tcell.EventKey:
 			// handle keypress
-			switch ev.Key {
-			case termbox.KeyCtrlC, termbox.KeyF10:
+			switch v.Key() {
+			case tcell.KeyCtrlC, tcell.KeyF10:
 				// close editor on C-c or F10
 				return
 			}
@@ -80,11 +79,6 @@ func loop() {
 func (e *editor) close() {
 	// recover any panic that happened naturally
 	r := recover()
-	if r != nil {
-		if v, ok := r.(syscall.Errno); ok && v == 0x57 {
-			panic("Crashed due to race condition in termbox-go: https://github.com/nsf/termbox-go/issues/125")
-		}
-	}
 
 	// reset terminal so any further output will be okay
 	e.term.reset()

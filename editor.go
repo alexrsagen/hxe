@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/nsf/termbox-go"
+	"github.com/gdamore/tcell"
 )
 
 type editorArea struct {
@@ -38,43 +38,45 @@ func (a *editorArea) init() (err error) {
 	return
 }
 
-func (a *editorArea) onEvent(ev termbox.Event) error {
-	switch ev.Type {
-	case termbox.EventResize:
+func (a *editorArea) onEvent(ev tcell.Event) error {
+	switch v := ev.(type) {
+	case *tcell.EventResize:
 		// resize buffer
 		if a.bufferSize() > int64(cap(a.buffer)) {
 			a.buffer = make([]byte, a.bufferSize())
 		}
 
 		// redraw content
-		app.term.reset()
+		app.term.hideCursor()
 		a.drawStatic()
 		a.drawDynamic()
 		app.term.setCursor(a.bufferOffsetPos(a.cursorOffset))
-	case termbox.EventKey:
+		app.term.showCursor()
+
+	case *tcell.EventKey:
 		var cursorChanged, pageChanged bool
-		switch ev.Key {
-		case termbox.KeyArrowLeft:
+		switch v.Key() {
+		case tcell.KeyLeft:
 			// move one byte back
 			a.cursorOffset--
 			cursorChanged = true
-		case termbox.KeyArrowRight:
+		case tcell.KeyRight:
 			// move one byte forward
 			a.cursorOffset++
 			cursorChanged = true
-		case termbox.KeyArrowUp:
+		case tcell.KeyUp:
 			// move one row back
 			a.cursorOffset -= app.flags.BytesPerRow
 			cursorChanged = true
-		case termbox.KeyArrowDown:
+		case tcell.KeyDown:
 			// move one row forward
 			a.cursorOffset += app.flags.BytesPerRow
 			cursorChanged = true
-		case termbox.KeyPgup:
+		case tcell.KeyPgUp:
 			// move one page back
 			a.cursorOffset -= cap(a.buffer)
 			cursorChanged = true
-		case termbox.KeyPgdn:
+		case tcell.KeyPgDn:
 			// move one page forward
 			a.cursorOffset += cap(a.buffer)
 			cursorChanged = true
@@ -144,6 +146,7 @@ func (a *editorArea) onEvent(ev termbox.Event) error {
 		// reposition cursor
 		if cursorChanged || pageChanged {
 			app.term.setCursor(a.bufferOffsetPos(a.cursorOffset))
+			app.term.showCursor()
 		}
 	}
 
@@ -156,9 +159,11 @@ func (a *editorArea) onClose() error {
 
 func (a *editorArea) onFocus() error {
 	// draw content
+	app.term.hideCursor()
 	a.drawStatic()
 	a.drawDynamic()
 	app.term.setCursor(a.bufferOffsetPos(a.cursorOffset))
+	app.term.showCursor()
 	return nil
 }
 
@@ -254,7 +259,8 @@ func (a *editorArea) drawStatic() {
 	var i, j, pad int
 
 	// invert foreground and background
-	app.term.fg, app.term.bg = app.term.bg, app.term.fg
+	app.term.style = app.term.style.Foreground(tcell.ColorBlack).Background(tcell.ColorWhite)
+	app.term.screen.SetStyle(app.term.style)
 
 	// reset cursor position
 	app.term.setCursor(pos{0, 0})
@@ -274,12 +280,9 @@ func (a *editorArea) drawStatic() {
 		app.term.writeOverflow(" ")
 	}
 
-	// restore foreground and background
-	app.term.fg, app.term.bg = app.term.bg, app.term.fg
-
 	// set new foreground and background
-	fg, bg := app.term.fg, app.term.bg
-	app.term.fg, app.term.bg = termbox.ColorBlack, termbox.ColorCyan
+	app.term.style = app.term.style.Foreground(tcell.ColorBlack).Background(tcell.ColorBlue)
+	app.term.screen.SetStyle(app.term.style)
 
 	// draw key reference
 	if app.flags.Columns["keys"] {
@@ -377,7 +380,8 @@ func (a *editorArea) drawStatic() {
 	}
 
 	// restore foreground and background
-	app.term.fg, app.term.bg = fg, bg
+	app.term.style = app.term.style.Foreground(tcell.ColorWhite).Background(tcell.ColorBlack)
+	app.term.screen.SetStyle(app.term.style)
 
 	// move cursor to start of new line
 	app.term.writeOverflow("\r\n")
@@ -422,13 +426,15 @@ func (a *editorArea) clearDynamic() {
 
 func (a *editorArea) drawKey(key, desc string) {
 	// invert foreground and background
-	app.term.fg, app.term.bg = app.term.bg, app.term.fg
+	app.term.style = app.term.style.Foreground(tcell.ColorBlue).Background(tcell.ColorBlack)
+	app.term.screen.SetStyle(app.term.style)
 
 	// draw key
 	app.term.writeOverflow(key)
 
 	// restore foreground and background
-	app.term.fg, app.term.bg = app.term.bg, app.term.fg
+	app.term.style = app.term.style.Foreground(tcell.ColorBlack).Background(tcell.ColorBlue)
+	app.term.screen.SetStyle(app.term.style)
 
 	// draw description and padding for next item
 	app.term.writeOverflow(desc + " ")

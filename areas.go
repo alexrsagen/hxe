@@ -1,6 +1,6 @@
 package main
 
-import "github.com/nsf/termbox-go"
+import "github.com/gdamore/tcell"
 
 type areas struct {
 	all     map[string]area
@@ -11,7 +11,7 @@ type area interface {
 	onFocus() error
 	onUnfocus() error
 	onClose() error
-	onEvent(termbox.Event) error
+	onEvent(tcell.Event) error
 	init() error
 }
 

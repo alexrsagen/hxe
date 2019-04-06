@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/nsf/termbox-go"
+	"github.com/gdamore/tcell"
 )
 
 // this file contains terminal setup and user input/output handling
@@ -21,13 +21,18 @@ type obj struct {
 
 type term struct {
 	obj
+	style    tcell.Style
+	screen   tcell.Screen
 	modified bool
-	fg       termbox.Attribute
-	bg       termbox.Attribute
 }
 
 func (t *term) init() (err error) {
-	if err = termbox.Init(); err != nil {
+	t.style = t.style.Background(tcell.ColorBlack).Foreground(tcell.ColorWhite)
+	if t.screen, err = tcell.NewScreen(); err != nil {
+		return
+	}
+	t.screen.SetStyle(t.style)
+	if err = t.screen.Init(); err != nil {
 		return
 	}
 	if err = t.reset(); err != nil {
@@ -37,32 +42,31 @@ func (t *term) init() (err error) {
 }
 
 func (t *term) reset() (err error) {
-	t.fg = termbox.ColorWhite
-	t.bg = termbox.ColorBlack
-	termbox.HideCursor()
-	if err = termbox.Clear(t.fg, t.bg); err != nil {
-		return
-	}
-	t.w, t.h = termbox.Size()
+	t.screen.Clear()
+	t.w, t.h = t.screen.Size()
 	t.setCursor(pos{0, 0})
 	return
 }
 
-func (t *term) flush() (err error) {
+func (t *term) flush() {
 	if t.modified {
-		err = termbox.Flush()
-		t.w, t.h = termbox.Size()
+		t.screen.Sync()
+		t.w, t.h = t.screen.Size()
 		t.setCursor(t.pos)
 		t.modified = false
 	}
-	return
 }
 
 func (t *term) setCursor(p pos) {
-	t.x, t.y = p.x, p.y
-	if t.x >= 0 && t.x < t.w && t.y >= 0 && t.y < t.h {
-		termbox.SetCursor(t.x, t.y)
-	}
+	t.pos = p
+}
+
+func (t *term) showCursor() {
+	t.screen.ShowCursor(t.x, t.y)
+}
+
+func (t *term) hideCursor() {
+	t.screen.HideCursor()
 }
 
 func (t *term) writeRune(c rune) {
@@ -71,9 +75,7 @@ func (t *term) writeRune(c rune) {
 	} else if c == '\r' {
 		t.x = 0
 	} else {
-		if t.x >= 0 && t.x < t.w && t.y >= 0 && t.y < t.h {
-			termbox.SetCell(t.x, t.y, c, t.fg, t.bg)
-		}
+		t.screen.SetContent(t.x, t.y, c, nil, t.style)
 		t.x++
 	}
 	t.setCursor(t.pos)
@@ -107,5 +109,5 @@ func (t *term) writeOverflow(s string) {
 }
 
 func (t *term) close() {
-	termbox.Close()
+	t.screen.Fini()
 }
