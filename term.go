@@ -27,25 +27,22 @@ type term struct {
 }
 
 func (t *term) init() (err error) {
-	t.style = t.style.Background(tcell.ColorBlack).Foreground(tcell.ColorWhite)
 	if t.screen, err = tcell.NewScreen(); err != nil {
 		return
 	}
-	t.screen.SetStyle(t.style)
 	if err = t.screen.Init(); err != nil {
 		return
 	}
-	if err = t.reset(); err != nil {
-		return
-	}
+	t.reset()
 	return
 }
 
-func (t *term) reset() (err error) {
+func (t *term) reset() {
+	t.style = t.style.Background(tcell.ColorBlack).Foreground(tcell.ColorWhite)
+	t.screen.SetStyle(t.style)
 	t.screen.Clear()
 	t.w, t.h = t.screen.Size()
 	t.setCursor(pos{0, 0})
-	return
 }
 
 func (t *term) flush() {
