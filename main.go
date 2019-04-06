@@ -4,7 +4,6 @@ package main
 // TODO: add data editor for generic data (binary, ints, floats, time, guid, disasm?)
 // TODO: add data editor for defined data (file formats, structs, protobufs?)
 // TODO: add simple endianness switch in data editors
-// TODO: add debounce to resize event
 // TODO: add some settings from within the editor to change flags
 
 import (
