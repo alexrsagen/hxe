@@ -80,6 +80,14 @@ func (a *editorArea) onEvent(ev tcell.Event) error {
 			// move one page forward
 			a.cursorOffset += cap(a.buffer)
 			cursorChanged = true
+		case tcell.KeyHome:
+			// move to first byte of row
+			a.cursorOffset -= a.cursorOffset % app.flags.BytesPerRow
+			cursorChanged = true
+		case tcell.KeyEnd:
+			// move to last byte of row
+			a.cursorOffset += app.flags.BytesPerRow - a.cursorOffset%app.flags.BytesPerRow - 1
+			cursorChanged = true
 		}
 
 		// handle cursor overflow/underflow
